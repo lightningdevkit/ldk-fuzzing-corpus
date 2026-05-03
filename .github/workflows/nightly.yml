@@ -1,0 +1,72 @@
+name: Nightly corpus management
+
+on:
+  schedule:
+    # 04:17 UTC every day. Avoid the top of the hour to dodge GitHub Actions
+    # cron contention.
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+# Limit concurrency so a manual dispatch and the nightly run can't race.
+concurrency:
+  group: nightly-corpus
+  cancel-in-progress: false
+
+jobs:
+  process-prs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      head_sha: ${{ steps.head.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Configure git identity
+        run: |
+          git config user.name "ldk-corpus-bot"
+          git config user.email "ldk-corpus-bot@users.noreply.github.com"
+      - name: Process open pull requests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/manage-prs.sh
+      - name: Capture post-merge HEAD
+        id: head
+        run: |
+          git fetch origin master
+          echo "sha=$(git rev-parse origin/master)" >> "$GITHUB_OUTPUT"
+
+  minimize:
+    needs: process-prs
+    runs-on: self-hosted
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.process-prs.outputs.head_sha }}
+          fetch-depth: 0
+      - name: Install Rust 1.63 toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile=minimal --default-toolchain 1.63
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Run honggfuzz minimization
+        env:
+          CORPUS_DIR: ${{ github.workspace }}
+        run: ./scripts/minimize-corpus.sh
+      - name: Commit and push minimized corpus
+        run: |
+          git config user.name "ldk-corpus-bot"
+          git config user.email "ldk-corpus-bot@users.noreply.github.com"
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Corpus is already minimal; nothing to commit."
+            exit 0
+          fi
+          git add -A rust-lightning
+          git commit -m "Nightly minimized corpus
+
+Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          git push origin HEAD:master
