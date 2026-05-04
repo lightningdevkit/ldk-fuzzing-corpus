@@ -31,18 +31,6 @@ cargo update -p quote --precise "1.0.41"
     cargo update -p quote --precise "1.0.41"
 )
 
-# Regenerate the message and target files exactly the way ci-fuzz.sh does.
-(
-    cd src/msg_targets
-    rm msg_*.rs
-    ./gen_target.sh
-)
-(
-    cd src/bin
-    rm ./*_target.rs
-    ./gen_target.sh
-)
-
 export RUSTFLAGS="--cfg=secp256k1_fuzz --cfg=hashes_fuzz"
 
 # Bootstrap full_stack with the deterministic seeds write-seeds produces.
