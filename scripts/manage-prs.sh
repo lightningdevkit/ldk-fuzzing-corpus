@@ -48,7 +48,6 @@ mapfile -t PRS < <(gh pr list --state open --limit 1000 --json number --jq '.[].
 
 if [ ${#PRS[@]} -eq 0 ]; then
     echo "No open PRs."
-    exit 0
 fi
 
 for PR in "${PRS[@]}"; do
@@ -114,7 +113,10 @@ for PR in "${PRS[@]}"; do
             close_pr "$PR" "merge conflict with \`master\`"
             ;;
         MERGEABLE)
-            if ! gh pr merge "$PR" --merge --delete-branch=false; then
+            # `--delete-branch` removes the head branch after merge. For PRs
+            # opened from a fork, deleting the fork's branch fails silently
+            # without affecting the merge.
+            if ! gh pr merge "$PR" --merge --delete-branch; then
                 echo "Merge of #$PR failed unexpectedly; leaving open."
             fi
             ;;
@@ -125,3 +127,28 @@ for PR in "${PRS[@]}"; do
 
     echo "::endgroup::"
 done
+
+# Sweep up any remaining branches on the corpus repo. After this point all
+# open PRs have been closed, merged, or deferred to the next run. Closed-PR
+# branches stick around because `gh pr close` doesn't delete them, and
+# any abandoned ci-bot branches accumulate too. Master is the only branch
+# we want to keep.
+echo "::group::Cleanup stale branches"
+git fetch --quiet --prune origin
+mapfile -t STALE_BRANCHES < <(
+    git for-each-ref --format='%(refname:short)' refs/remotes/origin/ \
+        | sed 's|^origin/||' \
+        | grep -vxF master \
+        | grep -vxF HEAD
+)
+if [ ${#STALE_BRANCHES[@]} -eq 0 ]; then
+    echo "No stale branches."
+else
+    REFSPECS=()
+    for B in "${STALE_BRANCHES[@]}"; do
+        [ -n "$B" ] && REFSPECS+=(":refs/heads/$B")
+    done
+    echo "Deleting ${#REFSPECS[@]} branches: ${STALE_BRANCHES[*]}"
+    git push origin "${REFSPECS[@]}" || echo "Some branch deletions failed."
+fi
+echo "::endgroup::"
