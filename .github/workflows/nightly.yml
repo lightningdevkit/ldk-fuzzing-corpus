@@ -48,10 +48,10 @@ jobs:
         with:
           ref: ${{ needs.process-prs.outputs.head_sha }}
           fetch-depth: 0
-      - name: Install Rust 1.63 toolchain
+      - name: Install Rust 1.75 toolchain
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --profile=minimal --default-toolchain 1.63
+            | sh -s -- -y --profile=minimal --default-toolchain 1.75
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Run honggfuzz minimization
         env:
