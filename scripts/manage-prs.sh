@@ -3,12 +3,21 @@
 # to run in a GitHub Actions job with `gh` and `jq` available and `GH_TOKEN`
 # (or `GITHUB_TOKEN`) set.
 #
-# Per-PR validation is delegated to `validate-pr.sh`, which is also wired
-# up as a `pull_request_target` CI check so contributors get fast feedback.
-# We re-run it here as a backstop because PRs created by `GITHUB_TOKEN`
-# (i.e. the nightly minimization PR opened by `github-actions[bot]`) do not
-# trigger workflows, so the per-PR CI never ran for them — the validation
-# call below is the one that gates that PR.
+# Validation is layered:
+#   1. `validate-pr.sh` runs first — it's the same script wired up as the
+#      `pull_request_target` CI check. It applies the lenient rules
+#      (allows `removed`/`modified` and dot-FILES like `.gitkeep` for the
+#      `github-actions[bot]` minimization PR). If a PR fails these basic
+#      rules, that script closes it with a reason comment.
+#   2. We then apply a *stricter* check inline below: the PR must not
+#      remove any file and must not touch any path component starting with
+#      `.`. This is what the original (pre-CI-split) manage-prs.sh
+#      enforced, and we keep it here so the auto-merge path never lands a
+#      removal or a dot-path even if the lenient validator was somehow
+#      tricked into approving one. PRs that fail this stricter check are
+#      *not* closed — they're left open for human review (the
+#      bot-authored minimization PR fails this and is expected to be
+#      merged through a different path).
 #
 # After the PR loop we sweep stale branches: anything in this repo that
 # isn't `master` and isn't the head branch of a still-open PR.
@@ -32,6 +41,33 @@ for PR in "${PRS[@]}"; do
     # Validate. `validate-pr.sh` closes the PR with a reason comment if it
     # fails, so we just need to skip the merge step on non-zero exit.
     if ! PR_NUMBER="$PR" "$SCRIPT_DIR/validate-pr.sh"; then
+        echo "::endgroup::"
+        continue
+    fi
+
+    # Stricter merge-gate: regardless of the lenient bot exemption in
+    # `validate-pr.sh`, refuse to auto-merge any PR that removes files or
+    # touches a path component starting with `.`. The PR is left open
+    # rather than closed — the minimization PR is expected to land here
+    # and is meant to be merged through a different path (CI status check
+    # + branch protection auto-merge).
+    STRICT_FAIL=""
+    while IFS=$'\t' read -r STATUS FILENAME; do
+        if [ "$STATUS" != "added" ]; then
+            STRICT_FAIL="\`$FILENAME\` is \`$STATUS\` (not \`added\`)"
+            break
+        fi
+        case "/$FILENAME/" in
+            */.*)
+                STRICT_FAIL="\`$FILENAME\` has a path component starting with \`.\`"
+                break
+                ;;
+        esac
+    done < <(gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" \
+                | jq -rs 'add | .[] | "\(.status)\t\(.filename)"')
+
+    if [ -n "$STRICT_FAIL" ]; then
+        echo "Refusing to auto-merge #$PR: $STRICT_FAIL"
         echo "::endgroup::"
         continue
     fi
