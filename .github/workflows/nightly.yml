@@ -4,8 +4,7 @@ on:
   schedule:
     # 04:17 UTC every day. Avoid the top of the hour to dodge GitHub Actions
     # cron contention.
-    #- cron: '17 4 * * *'
-    - cron: '17 */6 * * *'
+    - cron: '17 4 * * *'
   workflow_dispatch:
 
 # Limit concurrency so a manual dispatch and the nightly run can't race.
