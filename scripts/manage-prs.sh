@@ -91,7 +91,7 @@ for PR in "${PRS[@]}"; do
             # `--delete-branch` removes the head branch after merge. For PRs
             # opened from a fork, deleting the fork's branch fails silently
             # without affecting the merge.
-            if ! gh pr merge "$PR" --merge --admin --delete-branch; then
+            if ! gh pr merge "$PR" --merge --delete-branch; then
                 echo "Merge of #$PR failed unexpectedly; leaving open."
             fi
             ;;

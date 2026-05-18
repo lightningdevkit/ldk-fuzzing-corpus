@@ -62,6 +62,7 @@ jobs:
       - name: Open PR with minimized corpus and auto-merge once CI passes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BOT_PAT: ${{ secrets.PR_RETRIGGER_PAT }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           git config user.name "ldk-corpus-bot"
@@ -83,10 +84,21 @@ jobs:
           PR_NUM="${PR_URL##*/}"
           echo "Opened PR #$PR_NUM ($PR_URL)"
 
-          # Poll the PR's status checks for up to 60s. We merge as soon as
-          # the rollup is SUCCESS, bail early on FAILURE, and leave the PR
-          # open for the next nightly run on PENDING timeout.
-          DEADLINE=$(( $(date +%s) + 60 ))
+          # Actions taken with GITHUB_TOKEN don't trigger workflows, so
+          # `pr-validation.yml` (the `validate` check required by the
+          # branch ruleset) never fires on a PR we just opened. Close
+          # and reopen with a PAT to emit a `reopened` event under a
+          # non-GITHUB_TOKEN actor — that does trigger workflows.
+          # `pull_request.user.login` is set at creation time and isn't
+          # changed by reopen, so the validator still sees the author
+          # as `github-actions[bot]` and applies the bot-author rules
+          # (which permit `removed`/`modified` and `.gitkeep`).
+          GH_TOKEN="$BOT_PAT" gh pr close "$PR_NUM"
+          GH_TOKEN="$BOT_PAT" gh pr reopen "$PR_NUM"
+
+          # Poll the PR's status checks for up to 5m. We merge as soon as
+          # the rollup is SUCCESS, otherwise just close it.
+          DEADLINE=$(( $(date +%s) + 300 ))
           ROLLUP="PENDING"
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
             ROLLUP=$(gh pr view "$PR_NUM" --json statusCheckRollup --jq '
@@ -106,13 +118,14 @@ jobs:
 
           case "$ROLLUP" in
             SUCCESS)
-              gh pr merge "$PR_NUM" --merge --delete-branch --admin
+              gh pr merge "$PR_NUM" --merge --delete-branch
               echo "Merged #$PR_NUM."
               ;;
             FAILURE)
               echo "Status checks for #$PR_NUM failed; leaving PR open for triage."
               ;;
             *)
-              echo "Status checks for #$PR_NUM still PENDING after 60s; leaving PR open."
+              echo "Status checks for #$PR_NUM still PENDING after 5m; abandoning."
+              gh pr close "$PR_NUM" --delete-branch
               ;;
           esac
