@@ -96,9 +96,9 @@ jobs:
           GH_TOKEN="$BOT_PAT" gh pr close "$PR_NUM"
           GH_TOKEN="$BOT_PAT" gh pr reopen "$PR_NUM"
 
-          # Poll the PR's status checks for up to 5m. We merge as soon as
+          # Poll the PR's status checks for up to 15m. We merge as soon as
           # the rollup is SUCCESS, otherwise just close it.
-          DEADLINE=$(( $(date +%s) + 300 ))
+          DEADLINE=$(( $(date +%s) + 900 ))
           ROLLUP="PENDING"
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
             ROLLUP=$(gh pr view "$PR_NUM" --json statusCheckRollup --jq '
@@ -125,7 +125,7 @@ jobs:
               echo "Status checks for #$PR_NUM failed; leaving PR open for triage."
               ;;
             *)
-              echo "Status checks for #$PR_NUM still PENDING after 5m; abandoning."
+              echo "Status checks for #$PR_NUM still PENDING after 15m; abandoning."
               gh pr close "$PR_NUM" --delete-branch
               ;;
           esac
